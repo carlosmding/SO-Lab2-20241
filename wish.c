@@ -5,19 +5,15 @@
 #include <sys/wait.h>
 #include <errno.h>
 
-// Tamaño máximo de entrada y argumentos
 #define MAX_INPUT 1024
 #define MAX_ARGS 64
 #define MAX_PATH 10
 
-// Mensaje de error
-char error_message[30] = "Ha ocurrido un error\n";
+char error_message[30] = "An error has occurred\n";
 
-// Variable path y su tamaño actual
 char *path[MAX_PATH];
 int path_count = 0;
 
-// Inicialización de path con valores por defecto
 void initialize_path() {
     path[0] = strdup("./");
     path[1] = strdup("/usr/bin/");
@@ -25,7 +21,6 @@ void initialize_path() {
     path_count = 3;
 }
 
-// Liberar memoria de path
 void free_path() {
     for (int i = 0; i < path_count; i++) {
         free(path[i]);
@@ -34,12 +29,10 @@ void free_path() {
     path_count = 0;
 }
 
-// Comando built-in `exit`
 void run_exit() {
     exit(0);
 }
 
-// Comando built-in `cd`
 void run_cd(char **args, int num_args) {
     if (num_args != 2) {
         write(STDERR_FILENO, error_message, strlen(error_message));
@@ -50,9 +43,8 @@ void run_cd(char **args, int num_args) {
     }
 }
 
-// Comando built-in `path`
 void set_path(char **args, int num_args) {
-    free_path(); // Limpiar el path actual
+    free_path(); 
     for (int i = 1; i < num_args; i++) {
         if (path_count < MAX_PATH) {
             path[path_count] = strdup(args[i]);
@@ -63,7 +55,6 @@ void set_path(char **args, int num_args) {
     }
 }
 
-// Ejecutar comandos externos
 int run_external_command(char **args) {
     char command_path[256];
     for (int i = 0; i < path_count; i++) {
@@ -78,7 +69,6 @@ int run_external_command(char **args) {
     return -1;
 }
 
-// Analizar entrada en tokens
 int parse_input(char *input, char **args) {
     int num_args = 0;
     char *token = strtok(input, " \t\n");
@@ -86,26 +76,28 @@ int parse_input(char *input, char **args) {
         args[num_args++] = token;
         token = strtok(NULL, " \t\n");
     }
-    args[num_args] = NULL; // Terminar con NULL para execv
+    args[num_args] = NULL; 
     return num_args;
 }
 
-// Loop principal del shell
-void shell_loop() {
+void shell_loop(FILE *input_stream) {
     char input[MAX_INPUT];
     char *args[MAX_ARGS];
     int num_args;
 
     while (1) {
-        printf("wish> ");
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+        if (input_stream == stdin) {
+            printf("wish> ");
+            fflush(stdout);
+        }
+        
+        if (fgets(input, sizeof(input), input_stream) == NULL) {
             break; // EOF
         }
         
         num_args = parse_input(input, args);
         if (num_args == 0) continue; // Entrada vacía
 
-        // Procesar comandos built-in
         if (strcmp(args[0], "exit") == 0) {
             run_exit();
         } else if (strcmp(args[0], "cd") == 0) {
@@ -113,14 +105,11 @@ void shell_loop() {
         } else if (strcmp(args[0], "path") == 0) {
             set_path(args, num_args);
         } else {
-            // Ejecutar comando externo
             pid_t pid = fork();
             if (pid == 0) {
-                // Proceso hijo
                 run_external_command(args);
-                exit(1); // En caso de fallo
+                exit(1); 
             } else if (pid > 0) {
-                // Proceso padre espera al hijo
                 wait(NULL);
             } else {
                 write(STDERR_FILENO, error_message, strlen(error_message));
@@ -135,9 +124,20 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    initialize_path(); // Inicializar path por defecto
-    shell_loop();      // Ejecutar loop del shell
-    free_path();       // Liberar path al final
+    initialize_path(); 
 
+    if (argc == 1) {
+        shell_loop(stdin); // Modo interactivo
+    } else if (argc == 2) {
+        FILE *batch_file = fopen(argv[1], "r");
+        if (batch_file == NULL) {
+            write(STDERR_FILENO, error_message, strlen(error_message));
+            exit(1);
+        }
+        shell_loop(batch_file); // Modo batch
+        fclose(batch_file);
+    }
+
+    free_path(); 
     return 0;
 }
