@@ -47,23 +47,25 @@ void run_cd(char **args, int num_args) {
 }
 
 void set_path(char **args, int num_args) {
-    // Limpiar cualquier path previamente establecido
-    free_path();
+    free_path(); // Limpiar el path existente
 
-    // Verificar que se haya pasado al menos un directorio al comando `path`
     if (num_args < 2) {
-        write(STDERR_FILENO, error_message, strlen(error_message));
-        return;
+        return; // No imprimir error, un path vacío es válido
     }
 
-    // Establecer el nuevo path
     for (int i = 1; i < num_args; i++) {
         path[path_count++] = strdup(args[i]);
     }
 }
 
 
+
 int run_external_command(char **args) {
+    if (path_count == 0) { // Si el path está vacío, no intentar ejecutar
+        write(STDERR_FILENO, error_message, strlen(error_message));
+        return -1;
+    }
+
     int redirect_count = 0;
     int last_redirect_index = -1;
     int i;
@@ -82,59 +84,47 @@ int run_external_command(char **args) {
         return -1;
     }
 
-    // Si hay exactamente una redirección
+    // Manejo de redirección (igual que antes)
     if (redirect_count == 1) {
-        // Verificar que hay un archivo después del último ">"
         if (args[last_redirect_index + 1] == NULL || args[last_redirect_index + 2] != NULL) {
             write(STDERR_FILENO, error_message, strlen(error_message));
             return -1;
         }
 
-        // Abrir el archivo de salida
         int output_fd = open(args[last_redirect_index + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (output_fd == -1) {
             write(STDERR_FILENO, error_message, strlen(error_message));
             return -1;
         }
 
-        // Redirigir stdout al archivo
         if (dup2(output_fd, STDOUT_FILENO) == -1) {
             write(STDERR_FILENO, error_message, strlen(error_message));
             close(output_fd);
             return -1;
         }
 
-        close(output_fd); // Cerrar el descriptor después de redirigir
-
-        // Terminar la lista de argumentos en el símbolo de redirección
+        close(output_fd);
         args[last_redirect_index] = NULL;
     }
 
-    // Intentar ejecutar el comando directamente en el directorio actual
+    // Intentar ejecutar en los directorios del path
     char command_path[256];
-    snprintf(command_path, sizeof(command_path), "%s", args[0]);
-    if (access(command_path, X_OK) == 0) {
-        if (execv(command_path, args) == -1) { // Si execv falla, retorna inmediatamente
+    for (i = 0; i < path_count; i++) {
+        snprintf(command_path, sizeof(command_path), "%s/%s", path[i], args[0]);
+        if (access(command_path, X_OK) == 0) {
+            execv(command_path, args);
             write(STDERR_FILENO, error_message, strlen(error_message));
             return -1;
         }
     }
 
-    // Si no se encuentra el comando, buscar en los directorios del `path`
-    for (i = 0; i < path_count; i++) {
-        snprintf(command_path, sizeof(command_path), "%s/%s", path[i], args[0]);
-        if (access(command_path, X_OK) == 0) {
-            if (execv(command_path, args) == -1) { // Si execv falla, retorna inmediatamente
-                write(STDERR_FILENO, error_message, strlen(error_message));
-                return -1;
-            }
-        }
-    }
-
-    // Si no se encontró el comando en ningún directorio del `path`
+    // Comando no encontrado en el path
     write(STDERR_FILENO, error_message, strlen(error_message));
     return -1;
 }
+
+
+
 
 
 static int parse_input(char *input, char **args) {
@@ -188,7 +178,7 @@ void execute_commands(char **commands) {
             pid_t pid = fork();
             if (pid == 0) {
                 run_external_command(args);
-                exit(1);
+                exit(1); // Garantizar que el hijo termine tras el comando
             } else if (pid > 0) {
                 pids[i] = pid;
             } else {
@@ -205,21 +195,22 @@ void execute_commands(char **commands) {
     }
 }
 
+
 void shell_loop(FILE *input_stream) {
     char input[MAX_INPUT];
     char *commands[MAX_ARGS];
 
     while (1) {
-        if (input_stream == stdin) {
+        if (input_stream == stdin) { // Mostrar el prompt solo en modo interactivo
             printf("wish> ");
             fflush(stdout);
         }
 
         if (fgets(input, sizeof(input), input_stream) == NULL) {
-            break;
+            break; // EOF o error al leer
         }
 
-        input[strcspn(input, "\n")] = 0;
+        input[strcspn(input, "\n")] = 0; // Remover el salto de línea
 
         int num_commands = parse_commands(input, commands);
         if (num_commands == 0) continue;
